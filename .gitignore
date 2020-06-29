@@ -1,0 +1,11 @@
+target/
+node_modules/
+!**/src/main/**
+!**/src/test/**
+
+### IntelliJ IDEA ###
+.idea
+*.iml
+
+# Serverless directories
+.serverless

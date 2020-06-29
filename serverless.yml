@@ -1,0 +1,143 @@
+service: learn
+
+plugins:
+  - serverless-pseudo-parameters
+
+custom:
+  taskTableName: 'task'
+  taskStreamName: 'task'
+  mentorServiceQueue: 'mentorServiceQueue'
+  menteeServiceQueue: 'menteeServiceQueue'
+  menteeEmail: 'mentee_learn@grr.la'
+  mentorEmail: 'mentor_learn@grr.la'
+  learnSystemEmail: 'learn_system@grr.la'
+
+provider:
+  name: aws
+  runtime: java8
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - { "Fn::GetAtt": ["TaskDynamoDBTable", "Arn"] }
+    - Effect: Allow
+      Action:
+        - kinesis:PutRecord
+      Resource:
+        - { "Fn::GetAtt": ["TaskEventStream", "Arn"] }
+    - Effect: Allow
+      Action:
+        - ses:SendEmail
+      Resource:
+        - "*"
+      Condition:
+        StringEquals:
+          ses:FromAddress:
+            - ${self:custom.learnSystemEmail}
+    - Effect: Allow
+      Action:
+        - sqs:SendMessage
+      Resource:
+        - { "Fn::GetAtt": ["MentorServiceQueue", "Arn"] }
+        - { "Fn::GetAtt": ["MenteeServiceQueue", "Arn"] }
+
+package:
+  artifact: 'target/${self:service}-${self:provider.stage}.jar'
+
+functions:
+  createTask:
+    handler: com.epam.learn.handler.CreateTaskHandler
+    events:
+      - http:
+          path: /task
+          method: post
+    environment:
+      TASK_TABLE_NAME: ${self:custom.taskTableName}
+      TASK_STREAM_NAME: ${self:custom.taskStreamName}
+  taskFulfillment:
+    handler: com.epam.learn.handler.TaskFulfillmentHandler
+    events:
+      - http:
+          path: /task/fulfill
+          method: post
+    environment:
+      TASK_TABLE_NAME: ${self:custom.taskTableName}
+      TASK_STREAM_NAME: ${self:custom.taskStreamName}
+  notifyAll:
+    handler: com.epam.learn.handler.NotifyAllHandler
+    events:
+      - stream:
+          arn:
+            arn:aws:kinesis:#{AWS::Region}:#{AWS::AccountId}:stream/task
+    environment:
+      MENTEE_EMAIL: ${self:custom.menteeEmail}
+      LEARN_SYSTEM_EMAIL: ${self:custom.learnSystemEmail}
+      MENTOR_SERVICE_QUEUE:
+        Ref: MentorServiceQueue
+  notifyMentor:
+    handler: com.epam.learn.handler.NotifyMentorHandler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MentorServiceQueue
+              - Arn
+          batchSize: 1
+    environment:
+      MENTOR_EMAIL: ${self:custom.mentorEmail}
+      LEARN_SYSTEM_EMAIL: ${self:custom.learnSystemEmail}
+  rateTask:
+    handler: com.epam.learn.handler.RateTaskHandler
+    events:
+      - http:
+          path: /task/rate
+          method: post
+    environment:
+      TASK_TABLE_NAME: ${self:custom.taskTableName}
+      MENTEE_SERVICE_QUEUE:
+        Ref: MenteeServiceQueue
+  notifyMentee:
+    handler: com.epam.learn.handler.NotifyMenteeHandler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - MenteeServiceQueue
+              - Arn
+          batchSize: 1
+    environment:
+      MENTEE_EMAIL: ${self:custom.menteeEmail}
+      LEARN_SYSTEM_EMAIL: ${self:custom.learnSystemEmail}
+
+resources:
+  Resources:
+    TaskDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.taskTableName}
+        AttributeDefinitions:
+          - AttributeName: "id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "id"
+            KeyType: "HASH"
+        BillingMode: PAY_PER_REQUEST
+    TaskEventStream:
+      Type: AWS::Kinesis::Stream
+      Properties:
+        Name: ${self:custom.taskStreamName}
+        ShardCount: 1
+    MentorServiceQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.mentorServiceQueue}
+    MenteeServiceQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:custom.menteeServiceQueue}
