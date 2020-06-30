@@ -11,6 +11,7 @@ import com.epam.learn.model.Task;
 import com.epam.learn.ses.EmailService;
 import com.epam.learn.util.ObjectMapperUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Objects;
 import lombok.extern.log4j.Log4j2;
 
 @Log4j2
@@ -28,6 +29,7 @@ public class NotifyMenteeHandler implements RequestHandler<SQSEvent, Void> {
                 .stream()
                 .map(SQSMessage::getBody)
                 .map(json -> ObjectMapperUtil.toObject(mapper, json, Task.class))
+                .filter(Objects::nonNull)
                 .forEach(this::notifyMentee);
 
         return null;
